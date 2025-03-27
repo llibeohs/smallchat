@@ -69,7 +69,8 @@ if {$color != ""} {
     puts "设置消息颜色为: $color"
     send "/color $color\r"
     expect {
-        "Color set to $color" {
+        # -glob 表示可以匹配以"Color set to $color"开头的任何内容
+        -glob "Color set to $color" {
             puts "颜色设置成功！"
         }
         "Invalid color" {

@@ -1,0 +1,88 @@
+#!/usr/bin/expect -f
+
+# smallchat-connect.exp - 自动连接到smallchat服务器的expect脚本
+# 使用方法: ./smallchat-connect.exp [主机名] [端口] [密码] [昵称] [颜色]
+
+# 设置超时时间（秒）
+set timeout 10
+
+# 处理命令行参数
+if {$argc < 2} {
+    puts "用法: $argv0 \[主机名\] \[端口\] \[密码\] \[昵称\] \[颜色\]"
+    puts "  主机名: 服务器主机名或IP地址（默认: localhost）"
+    puts "  端口: 服务器端口（默认: 7711）"
+    puts "  密码: 服务器密码（默认: password123）"
+    puts "  昵称: 聊天昵称（可选）"
+    puts "  颜色: 消息颜色（可选，可选值: red, green, yellow, blue, magenta, cyan, white, reset）"
+    exit 1
+}
+
+# 设置默认值和从命令行获取参数
+set host "localhost"
+set port "7711"
+set password "password123"
+set nickname ""
+set color ""
+
+# 根据提供的参数数量分配值
+if {$argc >= 1} {set host [lindex $argv 0]}
+if {$argc >= 2} {set port [lindex $argv 1]}
+if {$argc >= 3} {set password [lindex $argv 2]}
+if {$argc >= 4} {set nickname [lindex $argv 3]}
+if {$argc >= 5} {set color [lindex $argv 4]}
+
+# 显示连接信息
+puts "正在连接到 $host:$port..."
+
+# 启动nc命令连接到服务器
+spawn nc $host $port
+
+# 等待密码提示并发送密码
+expect "Please enter password to join chat:" {
+    send "$password\r"
+}
+
+# 处理密码验证结果
+expect {
+    "Password correct! Welcome to Simple Chat!" {
+        puts "密码验证成功！"
+    }
+    "Wrong password! Connection closed." {
+        puts "密码错误，连接已关闭。"
+        exit 1
+    }
+    timeout {
+        puts "连接超时，服务器没有响应。"
+        exit 1
+    }
+}
+
+# 如果提供了昵称，则设置昵称
+if {$nickname != ""} {
+    puts "设置昵称为: $nickname"
+    send "/nick $nickname\r"
+    # 不等待特定响应，因为服务器不会发送确认消息
+}
+
+# 如果提供了颜色，则设置颜色
+if {$color != ""} {
+    puts "设置消息颜色为: $color"
+    send "/color $color\r"
+    expect {
+        "Color set to $color" {
+            puts "颜色设置成功！"
+        }
+        "Invalid color" {
+            puts "无效的颜色，请使用以下颜色之一: red, green, yellow, blue, magenta, cyan, white, reset"
+        }
+        timeout {
+            puts "设置颜色超时。"
+        }
+    }
+}
+
+# 提示用户现在可以开始聊天
+puts "\n现在您可以开始聊天了。输入消息并按Enter发送。\n"
+
+# 进入交互模式，将用户输入发送到服务器，并将服务器输出显示给用户
+interact

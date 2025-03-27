@@ -34,6 +34,7 @@
 #include <assert.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "chatlib.h"
 
@@ -52,6 +53,8 @@
 struct client {
     int fd;     // Client socket.
     char *nick; // Nickname of the client.
+    int password_verified; // Whether client has verified password
+    char *color; // ANSI color code for client messages
 };
 
 /* This global structure encapsulates the global state of the chat. */
@@ -82,6 +85,9 @@ struct client *createClient(int fd) {
     c->fd = fd;
     c->nick = chatMalloc(nicklen+1);
     memcpy(c->nick,nick,nicklen);
+    c->password_verified = 0; // Initially not verified
+    c->color = chatMalloc(8); // Default color code length
+    strcpy(c->color, "\033[0m"); // Default color (no color)
     assert(Chat->clients[c->fd] == NULL); // This should be available.
     Chat->clients[c->fd] = c;
     /* We need to update the max client set if needed. */
@@ -94,6 +100,7 @@ struct client *createClient(int fd) {
  * state in Chat. */
 void freeClient(struct client *c) {
     free(c->nick);
+    free(c->color); // Free the color string
     close(c->fd);
     Chat->clients[c->fd] = NULL;
     Chat->numclients--;
@@ -133,6 +140,10 @@ void initChat(void) {
  * having as socket descriptor 'excluded'. If you want to send something
  * to every client just set excluded to an impossible socket: -1. */
 void sendMsgToAllClientsBut(int excluded, char *s, size_t len) {
+    struct client *sender = NULL;
+    if (excluded >= 0 && excluded <= Chat->maxclient) {
+        sender = Chat->clients[excluded];
+    }
     for (int j = 0; j <= Chat->maxclient; j++) {
         if (Chat->clients[j] == NULL ||
             Chat->clients[j]->fd == excluded) continue;
@@ -140,7 +151,29 @@ void sendMsgToAllClientsBut(int excluded, char *s, size_t len) {
         /* Important: we don't do ANY BUFFERING. We just use the kernel
          * socket buffers. If the content does not fit, we don't care.
          * This is needed in order to keep this program simple. */
-        write(Chat->clients[j]->fd,s,len);
+        /* Add terminal notification sequences before the message */
+        // write(Chat->clients[j]->fd,s,len);
+        /* 发送终端控制序列来增强通知效果:
+        * \a - 响铃
+        * \033]0;...007 - 设置终端标题
+        * \033[1m - 高亮显示
+        * \033[0m - 重置所有属性 */
+        char timebuf[32];
+        time_t now = time(NULL);
+        strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+        char notify_msg[256];
+        snprintf(notify_msg, sizeof(notify_msg), "\a\033]0;New Message!\007\033[1mNew Message! [%s]\033[0m\n", timebuf);
+        write(Chat->clients[j]->fd, notify_msg, strlen(notify_msg));
+        
+        /* Format message with sender's color and bold style */
+        char formatted_msg[512];
+        if (sender) {
+            snprintf(formatted_msg, sizeof(formatted_msg), "%s\033[1m%s\033[0m\n", sender->color, s);
+            write(Chat->clients[j]->fd, formatted_msg, strlen(formatted_msg));
+        } else {
+            /* If no sender (system message), use default formatting */
+            write(Chat->clients[j]->fd, s, len);
+        }
     }
 }
 
@@ -188,11 +221,9 @@ int main(void) {
                 int fd = acceptClient(Chat->serversock);
                 struct client *c = createClient(fd);
                 /* Send a welcome message. */
-                char *welcome_msg =
-                    "Welcome to Simple Chat! "
-                    "Use /nick <nick> to set your nick.\n";
-                write(c->fd,welcome_msg,strlen(welcome_msg));
-                printf("Connected client fd=%d\n", fd);
+                char *prompt = "Please enter password to join chat:\n";
+                write(c->fd,prompt,strlen(prompt));
+                printf("New client connection fd=%d, waiting for password\n", fd);
             }
 
             /* Here for each connected client, check if there are pending
@@ -221,6 +252,30 @@ int main(void) {
                         struct client *c = Chat->clients[j];
                         readbuf[nread] = 0;
 
+                        /* Check if client needs password verification */
+                        if (!c->password_verified) {
+                            /* Remove trailing newlines */
+                            char *p;
+                            p = strchr(readbuf,'\r'); if (p) *p = 0;
+                            p = strchr(readbuf,'\n'); if (p) *p = 0;
+
+                            /* Verify password (using "password123" as example) */
+                            if (strcmp(readbuf,"password123") == 0) {
+                                c->password_verified = 1;
+                                char *welcome = "Password correct! Welcome to Simple Chat!\n"
+                                            "Available commands:\n"
+                                            "  /nick <nickname> - Set your nickname\n"
+                                            "  /color <color> - Set your message color (red, green, yellow, blue, magenta, cyan, white, reset)\n";
+                                write(c->fd,welcome,strlen(welcome));
+                                printf("Client fd=%d password verified\n", j);
+                            } else {
+                                char *error = "Wrong password! Connection closed.\n";
+                                write(c->fd,error,strlen(error));
+                                printf("Client fd=%d failed password verification\n", j);
+                                freeClient(c);
+                            }
+                            continue;
+                        }
                         /* If the user message starts with "/", we
                          * process it as a client command. So far
                          * only the /nick <newnick> command is implemented. */
@@ -242,9 +297,46 @@ int main(void) {
                                 int nicklen = strlen(arg);
                                 c->nick = chatMalloc(nicklen+1);
                                 memcpy(c->nick,arg,nicklen+1);
+                            } else if (!strcmp(readbuf,"/color") && arg) {
+                                /* Handle color command */
+                                char *color_code = NULL;
+                                
+                                /* Map color names to ANSI color codes */
+                                if (!strcmp(arg,"red")) {
+                                    color_code = "\033[31m";
+                                } else if (!strcmp(arg,"green")) {
+                                    color_code = "\033[32m";
+                                } else if (!strcmp(arg,"yellow")) {
+                                    color_code = "\033[33m";
+                                } else if (!strcmp(arg,"blue")) {
+                                    color_code = "\033[34m";
+                                } else if (!strcmp(arg,"magenta")) {
+                                    color_code = "\033[35m";
+                                } else if (!strcmp(arg,"cyan")) {
+                                    color_code = "\033[36m";
+                                } else if (!strcmp(arg,"white")) {
+                                    color_code = "\033[37m";
+                                } else if (!strcmp(arg,"reset") || !strcmp(arg,"default")) {
+                                    color_code = "\033[0m";
+                                } else {
+                                    /* Invalid color */
+                                    char *errmsg = "Invalid color. Available colors: red, green, yellow, blue, magenta, cyan, white, reset\n";
+                                    write(c->fd,errmsg,strlen(errmsg));
+                                    continue;
+                                }
+                                
+                                /* Set the client's color */
+                                free(c->color);
+                                c->color = chatMalloc(strlen(color_code)+1);
+                                strcpy(c->color, color_code);
+                                
+                                /* Confirm color change */
+                                char confirm[128];
+                                snprintf(confirm, sizeof(confirm), "Color set to %s. %sThis is how your messages will look.\033[0m\n", arg, color_code);
+                                write(c->fd, confirm, strlen(confirm));
                             } else {
                                 /* Unsupported command. Send an error. */
-                                char *errmsg = "Unsupported command\n";
+                                char *errmsg = "Unsupported command. Available commands: /nick <nickname>, /color <color>\n";
                                 write(c->fd,errmsg,strlen(errmsg));
                             }
                         } else {
@@ -253,7 +345,7 @@ int main(void) {
                              *   nick> some message. */
                             char msg[256];
                             int msglen = snprintf(msg, sizeof(msg),
-                                "%s> %s", c->nick, readbuf);
+                                "%s: %s", c->nick, readbuf);
 
                             /* snprintf() return value may be larger than
                              * sizeof(msg) in case there is no room for the

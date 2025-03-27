@@ -115,7 +115,7 @@ void terminalCursorAtLineStart(void) {
     write(fileno(stdout),"\r",1);
 }
 
-#define IB_MAX 128
+#define IB_MAX 2048
 struct InputBuffer {
     char buf[IB_MAX];       // Buffer holding the data.
     int len;                // Current length.
@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
             perror("select() error");
             exit(1);
         } else if (num_events) {
-            char buf[128]; /* Generic buffer for both code paths. */
+            char buf[2048]; /* Generic buffer for both code paths. Increased to handle larger messages. */
 
             if (FD_ISSET(s, &readfds)) {
                 /* Data from the server? */

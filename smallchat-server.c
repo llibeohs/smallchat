@@ -166,7 +166,7 @@ void sendMsgToAllClientsBut(int excluded, char *s, size_t len) {
         write(Chat->clients[j]->fd, notify_msg, strlen(notify_msg));
         
         /* Format message with sender's color and bold style */
-        char formatted_msg[512];
+        char formatted_msg[2048];
         if (sender) {
             snprintf(formatted_msg, sizeof(formatted_msg), "%s\033[1m%s\033[0m\n", sender->color, s);
             write(Chat->clients[j]->fd, formatted_msg, strlen(formatted_msg));
@@ -228,7 +228,7 @@ int main(void) {
 
             /* Here for each connected client, check if there are pending
              * data the client sent us. */
-            char readbuf[256];
+            char readbuf[2048];
             for (int j = 0; j <= Chat->maxclient; j++) {
                 if (Chat->clients[j] == NULL) continue;
                 if (FD_ISSET(j, &readfds)) {
@@ -343,7 +343,7 @@ int main(void) {
                             /* Create a message to send everybody (and show
                              * on the server console) in the form:
                              *   nick> some message. */
-                            char msg[256];
+                            char msg[2048];
                             int msglen = snprintf(msg, sizeof(msg),
                                 "%s: %s", c->nick, readbuf);
 
